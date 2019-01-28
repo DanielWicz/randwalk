@@ -126,6 +126,11 @@ class MolecularRandWalk(RandomWalk):
                     randvec[2, key - 1] = randvec[2, value - 1]
                     self.currentbondmat[key] = np.array([value], dtype=int)
                     self.currentbondmat[value] = np.array([key], dtype=int)
+                    keyatomcoord = self.currentpos[:, key - 1]
+                    assatomcoord = self.currentpos[:, value - 1]
+                    distass = np.linalg.norm(keyatomcoord - assatomcoord)
+                    rattio = self.bondlenform / distass
+                    self.currentpos[:, value - 1] = keyatomcoord * (1 - rattio) + assatomcoord * rattio
                     break
         return randvec
 
@@ -167,6 +172,12 @@ class MolecularRandWalk(RandomWalk):
                     randvec[2, value - 1] = randvec[2, key - 1]
                     self.currentbondmat[key] = np.append(self.currentbondmat[key], value)
                     self.currentbondmat[value] = np.append(self.currentbondmat[value], key)
+                    # Normalize the bond lenght
+                    keyatomcoord = self.currentpos[:, key - 1]
+                    assatomcoord = self.currentpos[:, value - 1]
+                    distass = np.linalg.norm(keyatomcoord - assatomcoord)
+                    rattio = self.bondlenform / distass
+                    self.currentpos[:, value - 1] = keyatomcoord * (1 - rattio) + assatomcoord * rattio
         return randvec
 
     @staticmethod
@@ -309,7 +320,7 @@ class RunProgram(MolecularRandWalk, ):
 
 
 if __name__ == '__main__':
-    runsim = RunProgram(numofiter=10456, numofmols=120, bondformprob=0.999,
+    runsim = RunProgram(numofiter=10456, numofmols=12, bondformprob=0.999,
                         bondbreakprob=0.001, maxmov=2, boxsize=[30, 30, 30])
     runsim.runsim()
 
