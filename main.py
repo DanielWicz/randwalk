@@ -117,7 +117,9 @@ class MolecularRandWalk(RandomWalk):
             ifbondform = np.setdiff1d(ifform[key], currentbondmattemp[key])
             for value in ifbondform:
                 assert(value != 0)
-                # There is a little problem: it moves every atom once, so every dimer is moved twice
+                # There is a little problem: it changes the random value twice
+                # but it does not change overall results, it could be a tip
+                # for performance improvments
                 if self.bondformprob >= self.randobj.random() and currentbondmattemp[value].size == 0:
                     randvec[0, key - 1] = randvec[0, value - 1]
                     randvec[1, key - 1] = randvec[1, value - 1]
@@ -125,6 +127,46 @@ class MolecularRandWalk(RandomWalk):
                     self.currentbondmat[key] = np.array([value], dtype=int)
                     self.currentbondmat[value] = np.array([key], dtype=int)
                     break
+        return randvec
+
+    def randmovagr(self):
+        """
+        Generates a random vector of size 3xn, where n is the number of molecules,
+        the method checks if the bond can be formed or broken based on the probabilities
+        and bonding distance provided before the start of the simulation.
+        :return Random Vector; 3 x n nparraym, where n is the number of molecules:
+        """
+        randvec = (np.random.rand(self.posshape[0], self.posshape[1]) - 0.5) * 2
+        ifform = self.ifbondeddict()
+        # Make sure that the forming/breaking bonds events are indepedentent
+        currentbondmattemp = self.currentbondmat
+        # Breaking bonds: id does preserve bonds with probabilit 1 - bodnbreakprob
+        # and it does not remove the pair from the dictionary, so the bond is not formed again
+        for key in range(1, self.numofmols + 1):
+            assert(key != 0)
+            ifbondbreak = self.currentbondmat[key]
+            for value in ifbondbreak:
+                if 1 - self.bondbreakprob >= self.randobj.random() and ifbondbreak.size > 0:
+                    randvec[0, value - 1] = randvec[0, key - 1]
+                    randvec[1, value - 1] = randvec[1, key - 1]
+                    randvec[2, value - 1] = randvec[2, key - 1]
+                elif ifbondbreak.size > 0:
+                    self.currentbondmat[key] = np.setdiff1d(self.currentbondmat[key], np.array([value]))
+                    self.currentbondmat[value] = np.setdiff1d(self.currentbondmat[value], np.array([key]))
+
+        # forming new bonds, without previously generated involved
+        for key in range(1, self.numofmols + 1):
+            assert(key != 0)
+            ifbondform = np.setdiff1d(ifform[key], currentbondmattemp[key])
+            for value in ifbondform:
+                assert(value != 0)
+                # There is a little problem: it moves every atom once, so every dimer is moved twice
+                if self.bondformprob >= self.randobj.random() and currentbondmattemp[value].size == 0:
+                    randvec[0, value - 1] = randvec[0, key - 1]
+                    randvec[1, value - 1] = randvec[1, key - 1]
+                    randvec[2, value - 1] = randvec[2, key - 1]
+                    self.currentbondmat[key] = np.append(self.currentbondmat[key], value)
+                    self.currentbondmat[value] = np.append(self.currentbondmat[value], key)
         return randvec
 
     @staticmethod
@@ -153,7 +195,7 @@ class MolecularRandWalk(RandomWalk):
         provided on the beginning of the simulation. It retunrs
         dicitonary, which define atoms allowed to be bonded.
         :param n x n nparray filled with the bool values:
-        :return dictionary with two keys, atomnumber: atomnumber:
+        :return dictionary with two keys, atomnumber_1: atomnumber_1, atomnumber_2 ...:
         """
         molnum = self.numofmols
         indicemat = (matbool * self.atomindices).flatten()
@@ -251,7 +293,7 @@ class RunProgram(MolecularRandWalk, ):
                     savetofile = 0
                 savingcounter = 0
                 savetofile += 1
-            randmovvect = self.randmov()
+            randmovvect = self.randmovagr()
             self.randwalkstep(randmovvect)
             savingcounter += 1
 
@@ -267,8 +309,8 @@ class RunProgram(MolecularRandWalk, ):
 
 
 if __name__ == '__main__':
-    runsim = RunProgram(numofiter=3456, numofmols=240, bondformprob=0.99,
-                        bondbreakprob=0.01, maxmov=2, boxsize=[60, 60, 60])
+    runsim = RunProgram(numofiter=10456, numofmols=120, bondformprob=0.999,
+                        bondbreakprob=0.001, maxmov=2, boxsize=[30, 30, 30])
     runsim.runsim()
 
 
