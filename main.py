@@ -1,6 +1,9 @@
 import numpy as np
 import io
 from random import SystemRandom as Sysrand
+import random
+import math
+from copy import deepcopy
 
 
 class RandomWalk(object):
@@ -78,6 +81,8 @@ class MolecularRandWalk(RandomWalk):
         self.bondformprob = bondformprob
         self.bondbreakprob = bondbreakprob
         self.randobj = Sysrand(numseed)
+        self.randobj2 = random
+        self.randobj2.seed(numseed)
         self.bondlenform = bondlenform
         self.multibond = multibond
         self.currentbondmat = {x: np.array([], dtype=int) for x in range(1, self.numofmols + 1)}
@@ -89,6 +94,7 @@ class MolecularRandWalk(RandomWalk):
         Generates a random vector of size 3xn, where n is the number of molecules,
         the method checks if the bond can be formed or broken based on the probabilities
         and bonding distance provided before the start of the simulation.
+        The Algorithm is limited to the bonding of two molecules, so only dimers are formed.
         :return Random Vector; 3 x n nparraym, where n is the number of molecules:
         """
         randvec = (np.random.rand(self.posshape[0], self.posshape[1]) - 0.5) * 2
@@ -181,6 +187,96 @@ class MolecularRandWalk(RandomWalk):
         return randvec
 
     @staticmethod
+    def rotation_matrix(axis, theta):
+        """
+        Return the rotation matrix associated with counterclockwise rotation about
+        the given axis by theta radians.
+        """
+        axis = axis / math.sqrt(np.dot(axis, axis))
+        a = math.cos(theta / 2.0)
+        b, c, d = -axis * math.sin(theta / 2.0)
+        aa, bb, cc, dd = a * a, b * b, c * c, d * d
+        bc, ad, ac, ab, bd, cd = b * c, a * d, a * c, a * b, b * d, c * d
+        return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
+                         [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
+                         [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
+
+    def rand3dvec(self):
+        """
+        Generates a random 3D unit vector (direction) with a uniform spherical distribution
+        Algo from http://stackoverflow.com/questions/5408276/python-uniform-spherical-distribution
+        :return:
+        """
+        phi = self.randobj2.uniform(0, np.pi*2)
+        costheta = np.random.uniform(-1, 1)
+
+        theta = np.arccos(costheta)
+        x = np.sin(theta) * np.cos(phi)
+        y = np.sin(theta) * np.sin(phi)
+        z = np.cos(theta)
+        return np.array([x, y, z])
+
+    def randangle(self, lowest = 45.0 / 180.0 * np.pi, highest =90.0 / 180.0 * np.pi):
+        return self.randobj2.uniform(lowest,
+                               highest)
+
+    @staticmethod
+    def molcenter(molecule):
+        """
+        Calculates geometrical center of the molecule.
+        :param molecule:
+        :return:
+        """
+        return molecule.mean(axis=0)
+
+    def molist(self):
+        """
+        Creates list of numpy arrays with molecule's indices in form of
+        [[n_1, n_2 ... n_n], ... [n_1, n_2 ... n_n]].
+        :return the array mentioned earlier:
+        """
+        bondmat = self.currentbondmat
+        bondmatkeys = np.array(list(bondmat.keys()))
+        molecules = []
+        for i in range(1, self.numofmols + 1):
+            new = np.setdiff1d(bondmatkeys, bondmat[i])
+            bondmatkeys = new
+            if bondmat[i].shape[0] > 0:
+                molecules.append(np.append(i, bondmat[i]))
+        return molecules
+
+    def rotate(self):
+        """
+        Rotates bonded molecules using rotation matrix with
+        random vector as rotation axis and random angle.
+        :return It returns coordinates of all molecules,
+        where the bonded are rotated:
+        """
+        moleclist = self.molist()
+        currcoord = deepcopy(self.currentpos)
+        for molecule in moleclist:
+            onemoleculecoord = np.array([0, 0, 0], dtype=int).reshape(3, 1)
+            for atoms in molecule:
+                currentatom = currcoord[:, atoms - 1].reshape(3, 1)
+                onemoleculecoord = np.hstack((onemoleculecoord, currentatom))
+            onemoleculecoord = np.delete(onemoleculecoord, 0, 1)
+            randvec = self.rand3dvec()
+            randang = self.randangle()
+            moleculecenter = self.molcenter(onemoleculecoord)
+            # Center the molecule to the origin before rotation.
+            mol_rotated = onemoleculecoord - moleculecenter
+            # Rotate the molecule
+            mol_rotated = np.dot(self.rotation_matrix(randvec, randang), mol_rotated)
+            # Put back the molecule to the previous location
+            mol_rotated = mol_rotated + moleculecenter
+            i = 0
+            for atoms in molecule:
+                currcoord[:, atoms - 1] = mol_rotated[:, i]
+                i += 1
+        return currcoord
+
+
+    @staticmethod
     def distmat(coordmat):
         """
         Calculates distance matrix for the provided matrix.
@@ -227,6 +323,21 @@ class MolecularRandWalk(RandomWalk):
         distmat = self.distmat(self.currentpos)
         matbool = self.distmattobool(distmat)
         return self.matbooltopairlist(matbool)
+
+    def randwalkstep(self, randmovvect):
+        """
+        Performs one randomwalk iteration with the PBC corrected coordinates,
+        it requires a random vector as its argument. The overloaded function
+        rotates the molecule in contrast to the one in higher part of the class
+        hierarchy.
+        :param Random vector; 3 x n nparray, where n is the number of molecules:
+        :return None:
+        """
+        # Rotation of molecules
+        self.currentpos = self.rotate()
+        # Translation of molecules
+        newcoord = self.currentpos + randmovvect * self.maxmov
+        self.currentpos = newcoord + self.pbccorr(newcoord)
 
 
 class RunProgram(MolecularRandWalk, ):
@@ -320,8 +431,8 @@ class RunProgram(MolecularRandWalk, ):
 
 
 if __name__ == '__main__':
-    runsim = RunProgram(numofiter=10456, numofmols=12, bondformprob=0.999,
-                        bondbreakprob=0.001, maxmov=2, boxsize=[30, 30, 30])
+    runsim = RunProgram(numofiter=3456, numofmols=6, bondformprob=0.999,
+                        bondbreakprob=0.001, maxmov=1, boxsize=[15, 15, 15])
     runsim.runsim()
 
 
